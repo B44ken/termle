@@ -22,18 +22,9 @@ fn get_headers(buf: BufReader<&TcpStream>) -> Headers {
     let mut fingerprint = String::new();
     let mut guess = String::new();
 
-    let ip = buf.get_ref().peer_addr().unwrap().ip().to_string();
-    fingerprint.push_str(ip.as_str());
-
     let fp_fields = vec![
-        "Host",
         "User-Agent",
-        "Accept",
-        "Accept-Language",
-        "Accept-Encoding",
-        "Connection",
-        "Upgrade-Insecure-Requests",
-        "Cache-Control",
+        "X-Forwarded-For"
     ];
 
     for line in buf.lines() {
@@ -41,15 +32,18 @@ fn get_headers(buf: BufReader<&TcpStream>) -> Headers {
         if line.is_empty() {
             break;
         }
-        let first_word = line.split_whitespace().next().unwrap();
-        if first_word == "GET" {
+        let words = line.split_whitespace().collect::<Vec<&str>>();
+        if words[0] == "GET" {
             guess = line.split_whitespace().nth(1).unwrap().to_string();
-            guess = guess.split_off(1).to_uppercase();
-        } else if fp_fields.contains(&first_word) {
-            fingerprint.push_str(&line);
-            fingerprint.push('\n');
+            guess = guess.split_off(1).to_uppercase().replace("TERMLE/", "");
+        }
+        if fp_fields.contains(&words[0].replace(":", "").as_str()) {
+            fingerprint.push_str(words[1]);
+            fingerprint.push_str(",");
         }
     }
+
+    println!("fingerprint guess [{}][{}]", fingerprint, guess);
 
     Headers {
         fingerprint: fingerprint,
