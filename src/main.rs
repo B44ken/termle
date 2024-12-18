@@ -1,6 +1,6 @@
+mod answer;
 mod game;
 mod server;
-mod answer;
 
 use std::{collections::HashMap, net::TcpListener};
 
@@ -12,7 +12,6 @@ fn main() {
 
     let listener = TcpListener::bind("0.0.0.0:4242").unwrap();
     for stream in listener.incoming() {
-        let stream = stream.unwrap();
-        server::handle_connection(stream, &mut tries, ans);
+        server::handle_connection(stream.unwrap(), &mut tries, &mut ans);
     }
 }

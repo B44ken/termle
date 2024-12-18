@@ -4,7 +4,11 @@ use std::{
     net::TcpStream,
 };
 
-use crate::{answer::get_random_word, game::{create_termle, TermleResult}, TriesMap};
+use crate::{
+    answer::get_random_word,
+    game::{create_termle, Flag, TermleResult},
+    TriesMap,
+};
 
 const MAX_TRIES: usize = 5;
 
@@ -17,6 +21,10 @@ struct Headers {
 fn get_headers(buf: BufReader<&TcpStream>) -> Headers {
     let mut fingerprint = String::new();
     let mut guess = String::new();
+
+    let ip = buf.get_ref().peer_addr().unwrap().ip().to_string();
+    fingerprint.push_str(ip.as_str());
+
     let fp_fields = vec![
         "Host",
         "User-Agent",
@@ -51,10 +59,13 @@ fn get_headers(buf: BufReader<&TcpStream>) -> Headers {
 
 fn append_tries(tries: &mut TriesMap, headers: Headers) -> i64 {
     if tries.contains_key(&headers.fingerprint) {
-        tries
-            .get_mut(&headers.fingerprint)
-            .unwrap()
-            .push(headers.guess);
+        // todo: actually check validity
+        if headers.guess.len() == 5 && tries.get(&headers.fingerprint).unwrap().len() < MAX_TRIES {
+            tries
+                .get_mut(&headers.fingerprint)
+                .unwrap()
+                .push(headers.guess);
+        }
     } else {
         tries.insert(headers.fingerprint.clone(), vec![headers.guess]);
     }
@@ -71,6 +82,11 @@ pub fn build_response(term: TermleResult, tries: Vec<String>, answer: &str) -> S
         resp.push_str(answer);
         resp.push('\n');
         resp.push_str("your guesses: \n");
+        resp.push_str(create_tries_block(&tries, answer).as_str());
+    } else if term.flag == Flag::Won {
+        resp.push_str("the word was ");
+        resp.push_str(answer);
+        resp.push('\n');
         resp.push_str(create_tries_block(&tries, answer).as_str());
     } else {
         resp.push_str(
@@ -89,38 +105,41 @@ pub fn build_response(term: TermleResult, tries: Vec<String>, answer: &str) -> S
 fn create_tries_block(tries: &Vec<String>, answer: &str) -> String {
     let mut resp = String::new();
     for guess in tries {
-        resp.push_str(
-            &create_termle(&guess, answer)
-                .unwrap()
-                .to_ansi_hidden()
-                .as_str(),
-        );
+        resp.push_str(&create_termle(&guess, answer).to_ansi_hidden().as_str());
         resp.push('\n');
     }
     resp
 }
 
-pub fn handle_connection(mut stream: TcpStream, tries_map: &mut HashMap<String, Vec<String>>, mut answer: &str) {
+pub fn handle_connection(
+    mut stream: TcpStream,
+    tries_map: &mut HashMap<String, Vec<String>>,
+    answer: &mut String,
+) {
     let buf = BufReader::new(&stream);
     let headers = get_headers(buf);
     if headers.guess == "api/reset" {
-        stream.write_all("HTTP 1.1 200 OK\r\n\r\nresetting game".as_bytes()).unwrap();
+        stream
+            .write_all("HTTP 1.1 200 OK\r\n\r\nresetting game".as_bytes())
+            .unwrap();
         tries_map.clear();
-        answer = get_random_word();
+        *answer = get_random_word();
         return;
     }
 
     append_tries(tries_map, headers.clone());
 
     let term = create_termle(&headers.guess, answer);
-    if term.is_none() {
-        stream.write_all("HTTP 1.1 200 OK\r\n\r\ninvalid guess".as_bytes()).unwrap();
+    if term.flag == Flag::Error {
+        stream
+            .write_all("HTTP/1.1 200 OK\r\n\r\ninvalid guess\n".as_bytes())
+            .unwrap();
         return;
     }
     let response = build_response(
-        term.unwrap(),
+        term,
         tries_map.get(&headers.fingerprint).unwrap().clone(),
-        answer
+        &answer,
     );
     stream.write_all(response.as_bytes()).unwrap();
 }
